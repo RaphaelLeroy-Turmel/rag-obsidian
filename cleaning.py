@@ -80,7 +80,7 @@ def clean_files():
             clean_dir[name] = cleanFile_i
             clean_file = Path(f"{clean_dir_path}{file.name}_cleaned")
             clean_file.touch()
-            clean_file.write_text(content)
+            clean_file.write_text(content, encoding="utf-8")
             clean_file.unlink()
 
     return clean_dir
