@@ -9,6 +9,7 @@ from pathlib import Path
 import frontmatter
 from dotenv import dotenv_values
 import re
+import pymupdf 
 
 @dataclass
 class cleanFile:
@@ -62,29 +63,57 @@ def clean_wikilinks(text):
     
     return cleaned_text
 
+
+def read_pdf(path: Path) -> list[tuple[int, str]]:
+    pages = []
+    with pymupdf.open(path) as doc:
+        for num, page in enumerate(doc, start=1):
+            pages.append((num, page.get_text()))
+    return pages
+
+def clean_markdown(file):
+    print(f"cleaning of file : {file.name}")
+    name = file.name
+    text = clean_wikilinks(file.read_text(encoding="utf-8"))
+    post = frontmatter.loads(text)
+    metadata = post.metadata  # Dictionnaire des propriétés YAML
+    content = post.content    # Le contenu Markdown sans le YAML
+    cleaned = cleanFile(name, content, metadata)
+    out_file = Path(os.getenv("CLEAN_DIR")) / "md" / f"{file.name}_cleaned"
+    out_file.parent.mkdir(parents=True, exist_ok=True)
+    out_file.write_text(content, encoding="utf-8")
+    return cleaned
+
+
+def clean_pdf(file):
+    print(f"cleaning of file : {file.name}")
+    pages = read_pdf(file)
+    name = file.name
+    content = "\n".join(text for _, text in pages)
+    metadata = {}
+    cleaned = cleanFile(name, content, metadata)
+    out_file = Path(os.getenv("CLEAN_DIR")) / "pdf" / f"{file.name}_cleaned"
+    out_file.parent.mkdir(parents=True, exist_ok=True)
+    out_file.write_text(content, encoding="utf-8")
+    return cleaned
+
+
 def clean_files():
-    storage_path = Path(os.getenv("STORAGE_DIR"))
-    clean_dir_path = Path(os.getenv("CLEAN_DIR"))
-    clean_dir = {}
-    for i,file in enumerate(storage_path.iterdir()):
-        if(file.suffix == ".md"):
-            print(f"cleaning of file : {file.name}")
-            
-
-            name = file.name
-            text = clean_wikilinks(file.read_text(encoding="utf-8"))
-            post = frontmatter.loads(text)   
-            metadata = post.metadata  # Dictionnaire des propriétés YAML
-            content = post.content    # Le contenu Markdown sans le YAML   
-            cleanFile_i = cleanFile(name, content, metadata)
-            clean_dir[name] = cleanFile_i
-            clean_file = Path(f"{clean_dir_path}{file.name}_cleaned")
-            clean_file.touch()
-            clean_file.write_text(content, encoding="utf-8")
-            clean_file.unlink()
-
-    return clean_dir
-
+    data_path = Path(os.getenv("STORAGE_DIR"))
+    print("=" * 20)
+    print("clean_files()")
+    print("=" * 20)
+    cleaned_file_dic = {}
+    for file in data_path.iterdir():
+        if file.suffix == ".md":
+            cleaned_file = clean_markdown(file)
+        elif file.suffix == ".pdf":
+            cleaned_file = clean_pdf(file)
+        else:
+            continue
+        cleaned_file_dic[cleaned_file.name] = cleaned_file
+    return cleaned_file_dic
+        
 
 
 
@@ -93,10 +122,10 @@ def main():
     config = load_env_file()
     for k,v in config.items():
         print(f"{k}={v}")
-    
-    clean_dir = clean_files()
-    for k,v in clean_dir.items():
-        print(f"item name : {k}\nvalue :\n{v}")
+    clean_files()
+    # clean_dir = clean_files()
+    # for k,v in clean_dir.items():
+    #     print(f"item name : {k}\nvalue :\n{v}")
 
 
 
