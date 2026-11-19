@@ -234,4 +234,5 @@ chunks.jsonl
 storage/
 .vscode
 claude/
+code_claude*.py
 clean_data/
