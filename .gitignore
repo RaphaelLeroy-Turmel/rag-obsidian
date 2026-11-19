@@ -222,6 +222,12 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
+# Personal project docs (kept in the Claude project, not on GitHub)
+HISTORIQUE.md
+GIT.md
+PYTHON.md
+QUESTIONS.md
+
 .env
 data/
 chunks.jsonl
