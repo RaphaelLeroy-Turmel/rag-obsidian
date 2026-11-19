@@ -2,6 +2,9 @@
 import hashlib                       # pour fabriquer l'identifiant (hash) de chaque chunk
 import re                            # expressions régulières (détection des titres, coupes)
 from dataclasses import dataclass, field
+import json
+from dataclasses import asdict
+from pathlib import Path
 
 from transformers import AutoTokenizer   # sert uniquement à COMPTER les tokens
 
@@ -204,11 +207,20 @@ def chunk_files(cleaned_files: dict) -> list[Chunk]:
     return chunks
 
 
+
+def save_chunks(chunks: list[Chunk], out_file: Path) -> None:
+    """Écrit les chunks en JSONL (une ligne = un chunk) pour pouvoir les relire."""
+    out_file.parent.mkdir(parents=True, exist_ok=True)
+    with out_file.open("w", encoding="utf-8") as f:
+        for c in chunks:
+            record = asdict(c)                       # text, source, headings, chunk_id
+            record["tokens"] = count_tokens(c.text)  # pratique pour repérer les chunks trop gros ou trop petits
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
 # Ce bloc ne s'exécute que si on lance `python chunking.py` directement
 # (pas quand un autre fichier fait `import chunking`).
 if __name__ == "__main__":
-    from cleaning import clean_files, load_env_file  # adapte selon ton code
-
+    from cleaning import clean_files, load_env_file,env_path
     load_env_file()                                   # charge le .env (chemins)
     all_chunks = chunk_files(clean_files())           # nettoyage puis chunking de tout le dossier
     sizes = sorted(count_tokens(c.text) for c in all_chunks)
@@ -216,3 +228,5 @@ if __name__ == "__main__":
     print(f"{len(all_chunks)} chunks | min {sizes[0]} | médiane {sizes[len(sizes)//2]} | max {sizes[-1]}")
     for c in all_chunks[:10]:                         # aperçu des 10 premiers chunks
         print(c)
+        
+    save_chunks(all_chunks, env_path("CLEAN_DIR") / "chunks.jsonl")
