@@ -48,6 +48,17 @@ def load_env_file(filepath=".env") -> dict:
     return values
 
 
+def env_path(name: str) -> Path:
+    """Read a path from an environment variable, with a clear error if it is missing."""
+    value = os.getenv(name)
+    if not value:
+        raise RuntimeError(
+            f"Variable d'environnement {name} absente ou vide : "
+            f"ajoute-la dans le fichier .env (voir .env.example)."
+        )
+    return Path(value)
+
+
 # ---------------------------------------------------------------------------
 # Text cleaning rules 
 # ---------------------------------------------------------------------------
@@ -79,7 +90,7 @@ def clean_markdown(file):
     metadata = post.metadata  # Dictionnaire des propriétés YAML
     content = post.content    # Le contenu Markdown sans le YAML
     cleaned = cleanFile(name, content, metadata)
-    out_file = Path(os.getenv("CLEAN_DIR")) / "md" / f"{file.name}_cleaned"
+    out_file = env_path("CLEAN_DIR") / "md" / f"{file.name}_cleaned"
     out_file.parent.mkdir(parents=True, exist_ok=True)
     out_file.write_text(content, encoding="utf-8")
     return cleaned
@@ -92,14 +103,14 @@ def clean_pdf(file):
     content = "\n".join(text for _, text in pages)
     metadata = {}
     cleaned = cleanFile(name, content, metadata)
-    out_file = Path(os.getenv("CLEAN_DIR")) / "pdf" / f"{file.name}_cleaned"
+    out_file = env_path("CLEAN_DIR") / "pdf" / f"{file.name}_cleaned"
     out_file.parent.mkdir(parents=True, exist_ok=True)
     out_file.write_text(content, encoding="utf-8")
     return cleaned
 
 
 def clean_files():
-    data_path = Path(os.getenv("STORAGE_DIR"))
+    data_path = env_path("STORAGE_DIR")
     print("=" * 20)
     print("clean_files()")
     print("=" * 20)
@@ -120,8 +131,9 @@ def clean_files():
 def main():
     # charger .env
     config = load_env_file()
-    for k,v in config.items():
-        print(f"{k}={v}")
+    # On affiche seulement les NOMS des variables, jamais leurs valeurs
+    # (le .env contiendra une clé API)
+    print(f"{len(config)} variables chargées depuis .env : {', '.join(config)}")
     clean_files()
     # clean_dir = clean_files()
     # for k,v in clean_dir.items():
@@ -131,8 +143,3 @@ def main():
 
 if __name__== "__main__":
     main()
-
-
-
-
-
