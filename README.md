@@ -1,73 +1,70 @@
 ---
 tags: [projet/rag-obsidian, readme]
 created: 2026-11-01
-updated: 2026-11-01
-statut: en cours — étape 1 (nettoyage des notes)
+updated: 2026-11-19
+status: in progress — step 2 (chunking)
 ---
 
 # RAG Obsidian
 
-Un RAG (Retrieval-Augmented Generation) léger qui indexe un dossier de mes notes Obsidian et répond à des questions en citant les notes sources.
+A lightweight RAG (Retrieval-Augmented Generation) system that indexes a folder of my Obsidian notes and PDFs, and answers questions while citing the source notes.
 
-> [!info] Fichiers liés
-> - [[HISTORIQUE]] : évolution du projet, choix et erreurs, dans l'ordre chronologique
-> - [[GIT]] : commandes Git vues pendant le projet et prochaines à apprendre
+## Goal
 
-## Objectif
+- Ask questions in natural language over a dedicated folder of notes (`.md` and `.pdf`, in French and English).
+- Automatically index new files.
+- Final target: run on my homelab (less than 4 GB of available RAM). **For now, all development happens on my PC.**
 
-- Interroger en langage naturel un dossier dédié de notes (`.md`, puis `.pdf`, en français et en anglais).
-- Indexer automatiquement les nouveaux fichiers.
-- Cible finale : tourner sur mon homelab (moins de 4 Go de RAM disponibles). **Pour l'instant, tout le développement se fait sur mon PC.**
-
-## Architecture visée
+## Architecture
 
 ```
-Dossier de notes (.md, .pdf)
+Notes folder (.md, .pdf)
         │
         ▼
-  1. Nettoyage        ← étape en cours
-  2. Chunking (découpage par titres)
+  1. Cleaning                         (cleaning.py)  ✔
+  2. Chunking (by Markdown headings)  (chunking.py)  ← current step
   3. Embeddings (multilingual-e5-small, CPU)
-  4. Stockage vectoriel (LanceDB)
-  5. Indexation incrémentale (hash + registre SQLite)
+  4. Vector store (LanceDB)
+  5. Incremental indexing (hash + SQLite registry)
         │
         ▼
-  Question → recherche des passages → LLM via API → réponse + sources
+  Question → passage retrieval → LLM via API → answer + sources
 ```
 
-Les raisons de ces choix sont détaillées dans [[HISTORIQUE#2026-10-29 — Choix de l'architecture]].
+Main design choices: home-made pipeline (no LangChain/LlamaIndex, to understand each step), local embeddings so notes never leave the machine during indexing, embedded vector database (no extra service), LLM through an API because there is no RAM for a local one.
 
-## État d'avancement
+## Progress
 
-- [x] Environnement Python et dépôt GitHub
-- [x] Première version du nettoyage des `.md` (`cleaning.py`)
-- [ ] Nettoyage fiabilisé et testé (pytest)
-- [ ] Chunking
+- [x] Python environment and GitHub repository
+- [x] Cleaning of `.md` notes and text extraction from PDFs (`cleaning.py`)
+- [x] Chunking by headings with token-based size control (`chunking.py`)
+- [ ] Chunking validated with the real tokenizer on my notes
+- [ ] Tests (pytest)
 - [ ] Embeddings
-- [ ] Recherche en mémoire (première baseline)
-- [ ] Stockage LanceDB + indexation incrémentale
-- [ ] Extraction des PDF
-- [ ] Génération avec un LLM
-- [ ] API (FastAPI) et évaluation (recall@k, MRR)
-- [ ] Déploiement sur le homelab
+- [ ] In-memory search (first baseline)
+- [ ] LanceDB storage + incremental indexing
+- [ ] Generation with an LLM
+- [ ] API (FastAPI) and evaluation (recall@k, MRR)
+- [ ] Deployment on the homelab
 
-## Structure actuelle du dépôt
+## Repository structure
 
 ```
 rag-obsidian/
-├── cleaning.py         # nettoyage des notes .md
-├── requirements.txt    # dépendances avec versions figées
-├── .env.example        # variables attendues, sans valeurs
-├── .env                # valeurs locales (ignoré par Git)
+├── cleaning.py         # cleaning of .md notes and PDF text extraction
+├── chunking.py         # split cleaned notes into chunks for embedding
+├── requirements.txt    # pinned dependencies
+├── .env.example        # expected variables, without values
+├── .env                # local values (ignored by Git)
 ├── .gitignore
-├── .gitattributes      # fins de ligne normalisées en LF
+├── .gitattributes      # line endings normalised to LF
 ├── README.md
-└── data/               # notes de test (ignoré par Git)
+└── data/               # test notes (ignored by Git)
 ```
 
 ## Installation
 
-Prérequis : Anaconda (Windows), Git.
+Requirements: Anaconda (Windows), Git.
 
 ```
 conda create -n rag-obsidian python=3.12
@@ -75,79 +72,75 @@ conda activate rag-obsidian
 python -m pip install -r requirements.txt
 ```
 
-Puis copier `.env.example` en `.env` et remplir les valeurs.
+Then copy `.env.example` to `.env` and fill in the values.
 
-> [!warning] Règles de l'environnement
-> - Installer les paquets avec `python -m pip`, jamais avec `conda install` dans cet environnement.
-> - Lancer les scripts avec `python`, jamais avec `py` (qui ignore l'environnement conda).
-> - Dans VS Code, sélectionner l'interpréteur `envs\rag-obsidian\python.exe`.
+> [!warning] Environment rules
+> - Install packages with `python -m pip`, never with `conda install` in this environment.
+> - Run scripts with `python`, never with `py` (which ignores the conda environment).
+> - In VS Code, select the interpreter `envs\rag-obsidian\python.exe`.
 
-### Variables d'environnement
+### Environment variables
 
-| Variable | Rôle |
+| Variable | Role |
 |---|---|
-| `STORAGE_DIR` | Dossier contenant les notes à nettoyer |
-| `CLEAN_DIR` | Dossier où écrire les notes nettoyées (débogage) |
+| `STORAGE_DIR` | Folder containing the notes and PDFs to process |
+| `CLEAN_DIR` | Folder where cleaned notes and exported chunks are written (debugging) |
 
-### Dépendances principales
+A missing variable stops the script with an explicit error message.
 
-| Paquet | Usage |
+### Main dependencies
+
+| Package | Use |
 |---|---|
-| `python-frontmatter` | Séparer le YAML (propriétés Obsidian) du corps de la note |
-| `python-dotenv` | Lire le fichier `.env` (installé, pas encore utilisé dans le code) |
-| `pytest` | Tests (installé, pas encore de tests dans le dépôt) |
+| `python-frontmatter` | Separate the YAML frontmatter (Obsidian properties) from the note body |
+| `python-dotenv` | Read the `.env` file |
+| `pymupdf` | Extract text from PDFs |
+| `transformers` | Load the `multilingual-e5-small` tokenizer to count tokens |
+| `pytest` | Tests (installed, no tests in the repository yet) |
 
-## Utilisation
+## Usage
 
 ```
-python cleaning.py
+python cleaning.py     # clean every note and write the result to CLEAN_DIR
+python chunking.py     # clean + chunk every note, print size statistics and a preview
 ```
 
-Le script charge le `.env`, parcourt `STORAGE_DIR`, nettoie chaque `.md` et affiche un aperçu de chaque note nettoyée.
+`chunking.py` prints the number of chunks and their min / median / max size in tokens, shows the first 10 chunks, and exports all chunks to `CLEAN_DIR/chunks.jsonl` for manual inspection.
 
-## Fonctionnement de `cleaning.py`
+## How it works
 
-| Élément | Rôle |
+### `cleaning.py`
+
+| Element | Role |
 |---|---|
-| `cleanFile` (dataclass) | Une note nettoyée : `name`, `content`, `metadata` |
-| `load_env_file()` | Lit le `.env` à la main et remplit `os.environ` |
-| `clean_wikilinks()` | Remplace `[[cible]]`, `[[cible#section]]`, `[[cible\|alias]]` et `![[embed]]` par le nom de la cible |
-| `clean_files()` | Parcourt le dossier, nettoie les wikilinks, sépare le frontmatter, construit les `cleanFile` |
-| `main()` | Point d'entrée, protégé par `if __name__ == "__main__"` |
+| `cleanFile` (dataclass) | A cleaned document: `name`, `content`, `metadata` |
+| `load_env_file()` | Loads `.env` with `python-dotenv` into `os.environ` |
+| `env_path()` | Reads a path from an environment variable, with a clear error if it is missing |
+| `clean_wikilinks()` | Replaces `[[target]]`, `[[target#section]]`, `[[target\|alias]]` and `![[embed]]` with the target name |
+| `clean_markdown()` | Cleans wikilinks, separates the frontmatter, writes the cleaned note |
+| `clean_pdf()` | Extracts the text of every page with `pymupdf` |
+| `clean_files()` | Processes every `.md` and `.pdf` in `STORAGE_DIR` |
 
-## Limites et bugs connus
+### `chunking.py`
 
-Relevés lors de la revue du 2026-11-01 (détail dans [[HISTORIQUE#2026-11-01 — Revue du code de nettoyage]]).
+1. **Split by headings**: each Markdown heading starts a new section; a heading stack keeps the path (`Note > Section > Subsection`). `#` lines inside code blocks are ignored.
+2. **Size control**: a section above `MAX_TOKENS` (300) is split by paragraphs, then lines, then sentences, then directly on tokens as a last resort. Small consecutive pieces are packed back together up to `MAX_TOKENS`.
+3. **Merge small chunks**: chunks under `MIN_TOKENS` (50) are merged into the previous one when the result stays under `MAX_TOKENS`.
 
-**Bugs**
-- Le fichier nettoyé est écrit puis immédiatement supprimé (`write_text` suivi de `unlink`) : rien n'est conservé dans `CLEAN_DIR`.
-- Le chemin de sortie colle le nom du fichier au dossier sans séparateur (`f"{clean_dir_path}{file.name}_cleaned"`).
-- `main()` affiche les **valeurs** du `.env` : une future clé API apparaîtrait dans le terminal.
-- Une ligne sans `=` dans le `.env` fait planter `load_env_file` (`ValueError`).
-- Si `STORAGE_DIR` est absent, l'erreur est un `TypeError` peu explicite.
-- Le message d'erreur du `.env` contient un `$` en trop (`${filepath}`).
+Each `Chunk` has `text`, `source`, `headings` and a `chunk_id` (SHA-256). `text_for_embedding` adds the `passage: ` prefix expected by E5 and the heading path. Tokens are counted with the embedding model's own tokenizer, because the model truncates anything above 512 tokens.
 
-**Comportements à décider ou corriger**
-- Les wikilinks sont nettoyés **avant** la lecture du frontmatter : un lien dans les propriétés YAML est aussi modifié.
-- Les embeds `![[image.png]]` laissent le nom du fichier dans le texte (le commentaire d'en-tête prévoit de les supprimer).
-- `[[Note|alias]]` garde la cible et non l'alias affiché.
-- Le parcours n'est pas récursif, et deux notes de même nom dans des dossiers différents s'écraseraient (clé = `file.name`).
-- Un wikilink dans un bloc de code est aussi modifié.
-- Pas encore traités : commentaires `%%…%%`, callouts, tags inline, liens Markdown, normalisation Unicode, BOM, CRLF.
+## Known limitations
 
-**Qualité de code**
-- Pas de tests.
-- Imports dispersés dans le fichier ; `print` au lieu de `logging`.
-- Variable `i` inutilisée dans `enumerate` ; `touch()` inutile avant l'écriture.
-- Nom de classe `cleanFile` au lieu de `CleanFile` (convention Python).
+- `chunk_id` includes the chunk position: adding a paragraph changes the ids of all following chunks (to fix before incremental indexing).
+- The `passage: ` prefix and heading path are not counted in `MAX_TOKENS`.
+- PDF page numbers are lost when pages are joined (needed for citations).
+- Cleaning: wikilinks are cleaned before the frontmatter is parsed, `[[note|alias]]` keeps the target instead of the alias, image embeds leave the file name in the text, the folder scan is not recursive.
+- Not handled yet: `%%…%%` comments, callouts, inline tags, Markdown links, Unicode normalisation, PDF headers/footers and hyphenation.
+- No automated tests yet.
 
-> [!tip] Proposition disponible
-> Une réécriture complète de `cleaning.py` avec 77 tests a été proposée le 2026-11-01, mais **pas intégrée** : j'ai choisi de garder mon propre code pour progresser. Elle reste une référence pour comparer mes corrections.
+## Next steps
 
-## Prochaines étapes
-
-1. Corriger les bugs ci-dessus, un commit par correction.
-2. Écrire mes propres tests `pytest` dans `tests/test_cleaning.py`.
-3. Commiter `.gitignore` (ajout de `.vscode/`), puis fusionner la branche `feature/nettoyage-markdown` via une Pull Request.
-4. Passer au chunking sur une nouvelle branche.
-5. Plus tard : traduire ce README en anglais avant de rendre le dépôt public (stage à l'étranger).
+1. Validate chunking with the real tokenizer on my notes.
+2. Keep PDF page numbers.
+3. Write `pytest` tests for cleaning and chunking.
+4. Step 3: embeddings (`embed_passages()`, `embed_query()`).
