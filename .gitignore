@@ -233,6 +233,5 @@ data/
 chunks.jsonl
 storage/
 .vscode
-HISTORIQUE.md
 claude/
 clean_data/
