@@ -47,6 +47,6 @@ if __name__ == "__main__":
     best_indices = get_best_embedding(embeddings, n=10, ref_vector=embeded_query)
     for rank, i in enumerate(best_indices, start=1):
         chunk = all_chunks[i]
-        print(f"\n#{rank} | score {embeddings[i] @ query_vector:.3f} | {chunk.source} | {chunk.headings}")
-        print(chunk.text[:100], "...")
+        print(f"\n#{rank} | score {embeddings[i] @ embeded_query:.3f} | {chunk.source} | {chunk.headings}")
+        print(chunk.text[:300], "...")
 
