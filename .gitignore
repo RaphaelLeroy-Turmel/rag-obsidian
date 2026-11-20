@@ -231,6 +231,7 @@ QUESTIONS.md
 .env
 data/
 eval/
+Revue de code*.md
 chunks.jsonl
 storage/
 .vscode
