@@ -10,6 +10,7 @@ import frontmatter
 from dotenv import dotenv_values
 import re
 import pymupdf 
+import unicodedata
 
 @dataclass
 class cleanFile:
@@ -65,6 +66,18 @@ def env_path(name: str) -> Path:
 # later I will add more text cleaning rules
 
 
+def normalize_unicode(text: str) -> str:
+    """Normalize Unicode with NFKC so that equivalent characters become identical.
+
+    PDFs often store "fi" and "fl" as a single ligature character ("\ufb01", "\ufb02"),
+    so "fields" is extracted as "\ufb01elds" and is not recognized as "fields"
+    by the search or by the embedding model. NFKC turns these ligatures (and other
+    special forms such as full-width letters or non-breaking spaces) into their
+    plain equivalent.
+    """
+    return unicodedata.normalize("NFKC", text)
+
+
 def clean_wikilinks(text):
     # La regex
     pattern = r'!?(?:\[\[)([^\]\|#]+)(?:#[^\]\|]+)?(?:\|[^\]]+)?(?:\]\])'
@@ -85,7 +98,8 @@ def read_pdf(path: Path) -> list[tuple[int, str]]:
 def clean_markdown(file):
     print(f"cleaning of file : {file.name}")
     name = file.name
-    text = clean_wikilinks(file.read_text(encoding="utf-8"))
+    raw_text = normalize_unicode(file.read_text(encoding="utf-8"))
+    text = clean_wikilinks(raw_text)
     post = frontmatter.loads(text)
     metadata = post.metadata  # Dictionnaire des propriétés YAML
     content = post.content    # Le contenu Markdown sans le YAML
@@ -100,7 +114,7 @@ def clean_pdf(file):
     print(f"cleaning of file : {file.name}")
     pages = read_pdf(file)
     name = file.name
-    content = "\n".join(text for _, text in pages)
+    content = normalize_unicode("\n".join(text for _, text in pages))
     metadata = {}
     cleaned = cleanFile(name, content, metadata)
     out_file = env_path("CLEAN_DIR") / "pdf" / f"{file.name}_cleaned"

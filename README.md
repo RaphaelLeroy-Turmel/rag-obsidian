@@ -1,8 +1,8 @@
 ---
 tags: [projet/rag-obsidian, readme]
 created: 2026-11-01
-updated: 2026-11-19
-status: in progress — step 2 (chunking)
+updated: 2026-11-20
+status: in progress — baseline evaluation done, step 4 (LanceDB) next
 ---
 
 # RAG Obsidian
@@ -21,10 +21,11 @@ A lightweight RAG (Retrieval-Augmented Generation) system that indexes a folder 
 Notes folder (.md, .pdf)
         │
         ▼
-  1. Cleaning                         (cleaning.py)  ✔
-  2. Chunking (by Markdown headings)  (chunking.py)  ← current step
-  3. Embeddings (multilingual-e5-small, CPU)
-  4. Vector store (LanceDB)
+  1. Cleaning (+ Unicode NFKC)        (cleaning.py)  ✔
+  2. Chunking (by Markdown headings)  (chunking.py)  ✔
+  3. Embeddings (multilingual-e5-small, CPU)  (embedder.py)  ✔
+     Retrieval evaluation             (eval/)        ✔ baseline
+  4. Vector store (LanceDB)                          ← next
   5. Incremental indexing (hash + SQLite registry)
         │
         ▼
@@ -33,18 +34,35 @@ Notes folder (.md, .pdf)
 
 Main design choices: home-made pipeline (no LangChain/LlamaIndex, to understand each step), local embeddings so notes never leave the machine during indexing, embedded vector database (no extra service), LLM through an API because there is no RAM for a local one.
 
+## Retrieval baseline
+
+Measured on 7 scientific papers/books and a few course notes (567 chunks), with 24 questions that have an answer in the corpus and 3 that do not.
+
+| Level | R@1 | R@3 | R@5 | R@10 | MRR |
+|---|---|---|---|---|---|
+| **Source** (a chunk from the right document) | 0.917 | 0.917 | 0.917 | 0.958 | 0.923 |
+| **Chunk** (a chunk containing the answer) | 0.458 | 0.625 | 0.708 | 0.792 | 0.574 |
+
+- English questions: source R@1 = 1.00; French questions on English papers: 0.75.
+- The right document is almost always found; the right **passage** much less often. This is the first thing to improve (re-ranking).
+- Mean top-1 similarity: 0.864 with an answer vs 0.803 without, too close for a score threshold to detect "I don't know".
+- With 24 questions, one question ≈ 4 points: differences under ~5 points are noise.
+
+Reaching this baseline required fixing the data first: Unicode NFKC normalization (PDF ligatures such as `ﬁ` broke words like "fields"), removing two PDFs whose text extracts as garbage, and removing a duplicated book.
+
 ## Progress
 
 - [x] Python environment and GitHub repository
-- [x] Cleaning of `.md` notes and text extraction from PDFs (`cleaning.py`)
+- [x] Cleaning of `.md` notes and text extraction from PDFs, with Unicode normalization (`cleaning.py`)
 - [x] Chunking by headings with token-based size control (`chunking.py`)
-- [ ] Chunking validated with the real tokenizer on my notes
-- [ ] Tests (pytest)
-- [ ] Embeddings
-- [ ] In-memory search (first baseline)
-- [ ] LanceDB storage + incremental indexing
+- [x] Embeddings and in-memory semantic search (`embedder.py`)
+- [x] Retrieval evaluation and baseline (`eval/`)
+- [ ] LanceDB storage, checked against the baseline
+- [ ] Re-ranking (cross-encoder), hybrid search (BM25)
+- [ ] Incremental indexing
 - [ ] Generation with an LLM
-- [ ] API (FastAPI) and evaluation (recall@k, MRR)
+- [ ] API (FastAPI)
+- [ ] Tests (pytest)
 - [ ] Deployment on the homelab
 
 ## Repository structure
@@ -53,13 +71,18 @@ Main design choices: home-made pipeline (no LangChain/LlamaIndex, to understand 
 rag-obsidian/
 ├── cleaning.py         # cleaning of .md notes and PDF text extraction
 ├── chunking.py         # split cleaned notes into chunks for embedding
+├── embedder.py         # embeddings with multilingual-e5-small + in-memory search
+├── eval/
+│   ├── questions.jsonl # evaluation questions, expected sources and evidence phrases
+│   ├── run_eval.py     # recall@k and MRR at source and chunk level
+│   └── results/        # one JSON file per evaluation run
 ├── requirements.txt    # pinned dependencies
 ├── .env.example        # expected variables, without values
-├── .env                # local values (ignored by Git)
+├── .env                # local values and secrets (ignored by Git)
 ├── .gitignore
 ├── .gitattributes      # line endings normalised to LF
 ├── README.md
-└── data/               # test notes (ignored by Git)
+└── data/               # notes and PDFs (ignored by Git)
 ```
 
 ## Installation
@@ -79,14 +102,17 @@ Then copy `.env.example` to `.env` and fill in the values.
 > - Run scripts with `python`, never with `py` (which ignores the conda environment).
 > - In VS Code, select the interpreter `envs\rag-obsidian\python.exe`.
 
+The first run of `embedder.py` downloads the model (~470 MB) into the Hugging Face cache (`~/.cache/huggingface/hub`); later runs reuse it.
+
 ### Environment variables
 
 | Variable | Role |
 |---|---|
 | `STORAGE_DIR` | Folder containing the notes and PDFs to process |
-| `CLEAN_DIR` | Folder where cleaned notes and exported chunks are written (debugging) |
+| `CLEAN_DIR` | Folder for debugging outputs: cleaned notes, `chunks.jsonl`, embeddings cache |
+| `HF_TOKEN` | Optional Hugging Face read token: faster and more reliable model download |
 
-A missing variable stops the script with an explicit error message.
+A missing path variable stops the script with an explicit error message. Only variable **names** are ever printed, never their values.
 
 ### Main dependencies
 
@@ -96,16 +122,18 @@ A missing variable stops the script with an explicit error message.
 | `python-dotenv` | Read the `.env` file |
 | `pymupdf` | Extract text from PDFs |
 | `transformers` | Load the `multilingual-e5-small` tokenizer to count tokens |
+| `sentence-transformers` | Load the embedding model and encode texts |
+| `psutil` | Measure memory usage |
 | `pytest` | Tests (installed, no tests in the repository yet) |
 
 ## Usage
 
 ```
-python cleaning.py     # clean every note and write the result to CLEAN_DIR
-python chunking.py     # clean + chunk every note, print size statistics and a preview
+python cleaning.py        # clean every note and write the result to CLEAN_DIR
+python chunking.py        # clean + chunk every note, print size statistics, export chunks.jsonl
+python embedder.py        # clean + chunk + embed, then run a test question and print the best chunks
+python -m eval.run_eval   # evaluate retrieval on eval/questions.jsonl (run from the repository root)
 ```
-
-`chunking.py` prints the number of chunks and their min / median / max size in tokens, shows the first 10 chunks, and exports all chunks to `CLEAN_DIR/chunks.jsonl` for manual inspection.
 
 ## How it works
 
@@ -116,9 +144,10 @@ python chunking.py     # clean + chunk every note, print size statistics and a p
 | `cleanFile` (dataclass) | A cleaned document: `name`, `content`, `metadata` |
 | `load_env_file()` | Loads `.env` with `python-dotenv` into `os.environ` |
 | `env_path()` | Reads a path from an environment variable, with a clear error if it is missing |
+| `normalize_unicode()` | NFKC normalization: PDF ligatures (`ﬁ`, `ﬂ`), full-width letters, non-breaking spaces become plain characters |
 | `clean_wikilinks()` | Replaces `[[target]]`, `[[target#section]]`, `[[target\|alias]]` and `![[embed]]` with the target name |
-| `clean_markdown()` | Cleans wikilinks, separates the frontmatter, writes the cleaned note |
-| `clean_pdf()` | Extracts the text of every page with `pymupdf` |
+| `clean_markdown()` | Normalizes, cleans wikilinks, separates the frontmatter, writes the cleaned note |
+| `clean_pdf()` | Extracts and normalizes the text of every page with `pymupdf` |
 | `clean_files()` | Processes every `.md` and `.pdf` in `STORAGE_DIR` |
 
 ### `chunking.py`
@@ -129,18 +158,38 @@ python chunking.py     # clean + chunk every note, print size statistics and a p
 
 Each `Chunk` has `text`, `source`, `headings` and a `chunk_id` (SHA-256). `text_for_embedding` adds the `passage: ` prefix expected by E5 and the heading path. Tokens are counted with the embedding model's own tokenizer, because the model truncates anything above 512 tokens.
 
+### `embedder.py`
+
+| Function | Role |
+|---|---|
+| `get_model()` | Loads `SentenceTransformer(MODEL_NAME)` once and reuses it |
+| `embed_passages(chunks)` | Encodes all chunks in one call (batches of 32), normalized vectors, shape `(n_chunks, 384)` |
+| `embed_query(question)` | Adds the `query: ` prefix and encodes the question |
+| `get_best_embedding(vectors, n, ref_vector)` | Scores = dot product (= cosine similarity, since vectors are normalized), returns the indices of the `n` best chunks |
+
+### `eval/run_eval.py`
+
+- Each question in `questions.jsonl` has `expected_sources` (keys matched against file names) and `evidence` (short phrases from the passage that contains the answer).
+- **Source level**: rank of the first chunk from an expected source. **Chunk level**: rank of the first chunk from an expected source that contains an evidence phrase (after normalization: lowercase, quotes, hyphenation, whitespace).
+- Reports recall@1/3/5/10 and MRR overall, by question type and by language, plus the top-1 score of questions with vs without an answer.
+- Flags questions whose evidence is found in **no** chunk (wrong evidence or missing source) and leaves them out of chunk-level metrics.
+- Embeddings are cached in `CLEAN_DIR/embeddings_cache.npz` and recomputed only when chunk ids or the model change.
+
 ## Known limitations
 
+- French questions are weaker than English ones (source R@1 0.75 vs 1.00); French course notes tend to match French questions by language rather than meaning.
+- Small evaluation set (24 questions with an answer): small differences between runs are noise.
+- Embedding time and RAM not measured yet.
 - `chunk_id` includes the chunk position: adding a paragraph changes the ids of all following chunks (to fix before incremental indexing).
 - The `passage: ` prefix and heading path are not counted in `MAX_TOKENS`.
-- PDF page numbers are lost when pages are joined (needed for citations).
+- PDFs whose fonts have no usable character mapping extract as garbage (would need OCR); PDF page numbers are lost (needed for citations).
 - Cleaning: wikilinks are cleaned before the frontmatter is parsed, `[[note|alias]]` keeps the target instead of the alias, image embeds leave the file name in the text, the folder scan is not recursive.
-- Not handled yet: `%%…%%` comments, callouts, inline tags, Markdown links, Unicode normalisation, PDF headers/footers and hyphenation.
 - No automated tests yet.
 
 ## Next steps
 
-1. Validate chunking with the real tokenizer on my notes.
-2. Keep PDF page numbers.
-3. Write `pytest` tests for cleaning and chunking.
-4. Step 3: embeddings (`embed_passages()`, `embed_query()`).
+1. Step 4: LanceDB storage and search, which must reproduce the baseline exactly.
+2. Re-ranking of the top 20-30 chunks with a multilingual cross-encoder, measured against the baseline.
+3. Hybrid search (BM25 + vectors, Reciprocal Rank Fusion).
+4. LLM generation with an "I don't know" instruction, then question translation/rewriting for French queries.
+5. Grow the evaluation set to 40-50 questions.
