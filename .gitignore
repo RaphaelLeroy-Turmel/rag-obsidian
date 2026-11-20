@@ -230,6 +230,7 @@ QUESTIONS.md
 
 .env
 data/
+eval/
 chunks.jsonl
 storage/
 .vscode
