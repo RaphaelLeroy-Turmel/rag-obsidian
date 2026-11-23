@@ -183,4 +183,4 @@ if __name__ == "__main__":
     # 7. Cleanup
     delete_by_source("test.md")
     assert get_table().count_rows() == start_count
-    print("7. cleanup OK, rows at end:", get_table().count_rows())
+    print("7. cleanup OK, rows at end :", get_table().count_rows())
