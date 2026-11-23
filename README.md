@@ -1,8 +1,8 @@
 ---
 tags: [projet/rag-obsidian, readme]
 created: 2026-11-01
-updated: 2026-11-20
-status: in progress — baseline evaluation done, step 4 (LanceDB) next
+updated: 2026-11-22
+status: in progress — LanceDB storage written and tested, regression check against the baseline next
 ---
 
 # RAG Obsidian
@@ -25,7 +25,8 @@ Notes folder (.md, .pdf)
   2. Chunking (by Markdown headings)  (chunking.py)  ✔
   3. Embeddings (multilingual-e5-small, CPU)  (embedder.py)  ✔
      Retrieval evaluation             (eval/)        ✔ baseline
-  4. Vector store (LanceDB)                          ← next
+  4. Vector store (LanceDB)           (vectors.py)   ✔ written and tested
+                                                     ← next: regression check vs the baseline
   5. Incremental indexing (hash + SQLite registry)
         │
         ▼
@@ -36,7 +37,7 @@ Main design choices: home-made pipeline (no LangChain/LlamaIndex, to understand 
 
 ## Retrieval baseline
 
-Measured on 7 scientific papers/books and a few course notes (567 chunks), with 24 questions that have an answer in the corpus and 3 that do not.
+Measured on 7 scientific papers/books and a few course notes (567 chunks), with 24 questions that have an answer in the corpus and 3 that do not. This is the in-memory search of `embedder.py`; the LanceDB search must reproduce it exactly.
 
 | Level | R@1 | R@3 | R@5 | R@10 | MRR |
 |---|---|---|---|---|---|
@@ -57,7 +58,8 @@ Reaching this baseline required fixing the data first: Unicode NFKC normalizatio
 - [x] Chunking by headings with token-based size control (`chunking.py`)
 - [x] Embeddings and in-memory semantic search (`embedder.py`)
 - [x] Retrieval evaluation and baseline (`eval/`)
-- [ ] LanceDB storage, checked against the baseline
+- [x] LanceDB storage: table, upsert, delete by source, cosine search, self-test (`vectors.py`)
+- [ ] LanceDB search checked against the baseline (regression test in `eval/run_eval.py`)
 - [ ] Re-ranking (cross-encoder), hybrid search (BM25)
 - [ ] Incremental indexing
 - [ ] Generation with an LLM
@@ -72,6 +74,7 @@ rag-obsidian/
 ├── cleaning.py         # cleaning of .md notes and PDF text extraction
 ├── chunking.py         # split cleaned notes into chunks for embedding
 ├── embedder.py         # embeddings with multilingual-e5-small + in-memory search
+├── vectors.py          # LanceDB table: store chunk embeddings, delete by source, search
 ├── eval/
 │   ├── questions.jsonl # evaluation questions, expected sources and evidence phrases
 │   ├── run_eval.py     # recall@k and MRR at source and chunk level
@@ -110,6 +113,7 @@ The first run of `embedder.py` downloads the model (~470 MB) into the Hugging Fa
 |---|---|
 | `STORAGE_DIR` | Folder containing the notes and PDFs to process |
 | `CLEAN_DIR` | Folder for debugging outputs: cleaned notes, `chunks.jsonl`, embeddings cache |
+| `DB_DIR` | Folder of the LanceDB database (outside the repository) |
 | `HF_TOKEN` | Optional Hugging Face read token: faster and more reliable model download |
 
 A missing path variable stops the script with an explicit error message. Only variable **names** are ever printed, never their values.
@@ -123,6 +127,7 @@ A missing path variable stops the script with an explicit error message. Only va
 | `pymupdf` | Extract text from PDFs |
 | `transformers` | Load the `multilingual-e5-small` tokenizer to count tokens |
 | `sentence-transformers` | Load the embedding model and encode texts |
+| `lancedb` (0.41.0) | Embedded vector database (installs `pyarrow`, used for the table schema) |
 | `psutil` | Measure memory usage |
 | `pytest` | Tests (installed, no tests in the repository yet) |
 
@@ -132,6 +137,7 @@ A missing path variable stops the script with an explicit error message. Only va
 python cleaning.py        # clean every note and write the result to CLEAN_DIR
 python chunking.py        # clean + chunk every note, print size statistics, export chunks.jsonl
 python embedder.py        # clean + chunk + embed, then run a test question and print the best chunks
+python vectors.py         # self-test of the LanceDB layer (7 checks, cleans up after itself)
 python -m eval.run_eval   # evaluate retrieval on eval/questions.jsonl (run from the repository root)
 ```
 
@@ -167,6 +173,19 @@ Each `Chunk` has `text`, `source`, `headings` and a `chunk_id` (SHA-256). `text_
 | `embed_query(question)` | Adds the `query: ` prefix and encodes the question |
 | `get_best_embedding(vectors, n, ref_vector)` | Scores = dot product (= cosine similarity, since vectors are normalized), returns the indices of the `n` best chunks |
 
+### `vectors.py`
+
+One row = one chunk. Columns: `id` (the `chunk_id`), `vector` (384 `float32`), `text` (the original text, without the `passage: ` prefix), `source`, `headings` (the heading path joined with ` > `). The database lives on disk in `DB_DIR`.
+
+| Function | Role |
+|---|---|
+| `get_table()` | Opens the `chunks` table, or creates it (empty, explicit PyArrow schema) if it does not exist; the connection is opened once |
+| `upsert_chunks(chunks, vectors)` | Writes the chunks with `merge_insert("id")`: updates the row if the id exists, inserts it otherwise, so writing twice never duplicates |
+| `delete_by_source(source)` | Deletes every chunk of one source file (apostrophes in the name are escaped) |
+| `search(query_vector, k)` | The `k` nearest chunks by cosine similarity, best first: dicts with `id`, `text`, `source`, `headings`, `score` (1.0 = identical) |
+
+Running `python vectors.py` executes a self-test with assertions: insert, no duplicate on a second write, update of a modified chunk, search (a chunk is its own nearest neighbour), invalid arguments, delete with an apostrophe in the source name, cleanup. It only touches the fake sources `test.md` and `it's.md` and can be run repeatedly.
+
 ### `eval/run_eval.py`
 
 - Each question in `questions.jsonl` has `expected_sources` (keys matched against file names) and `evidence` (short phrases from the passage that contains the answer).
@@ -181,15 +200,18 @@ Each `Chunk` has `text`, `source`, `headings` and a `chunk_id` (SHA-256). `text_
 - Small evaluation set (24 questions with an answer): small differences between runs are noise.
 - Embedding time and RAM not measured yet.
 - `chunk_id` includes the chunk position: adding a paragraph changes the ids of all following chunks (to fix before incremental indexing).
+- `chunk_id` also depends on the text: a modified chunk gets a new id and the old row stays in the table, so incremental indexing must call `delete_by_source()` before `upsert_chunks()` for a modified note.
+- LanceDB search not yet checked against the baseline; no real chunk is indexed yet.
 - The `passage: ` prefix and heading path are not counted in `MAX_TOKENS`.
 - PDFs whose fonts have no usable character mapping extract as garbage (would need OCR); PDF page numbers are lost (needed for citations).
 - Cleaning: wikilinks are cleaned before the frontmatter is parsed, `[[note|alias]]` keeps the target instead of the alias, image embeds leave the file name in the text, the folder scan is not recursive.
-- No automated tests yet.
+- No automated tests yet (only the self-test of `vectors.py`).
 
 ## Next steps
 
-1. Step 4: LanceDB storage and search, which must reproduce the baseline exactly.
-2. Re-ranking of the top 20-30 chunks with a multilingual cross-encoder, measured against the baseline.
-3. Hybrid search (BM25 + vectors, Reciprocal Rank Fusion).
-4. LLM generation with an "I don't know" instruction, then question translation/rewriting for French queries.
-5. Grow the evaluation set to 40-50 questions.
+1. Regression test: `eval/run_eval.py` uses LanceDB `search()`, with the same top-10 ids and the same baseline numbers as the in-memory search.
+2. Incremental indexing (step 5): hash and registry, `delete_by_source()` then `upsert_chunks()` for each modified note.
+3. Re-ranking of the top 20-30 chunks with a multilingual cross-encoder, measured against the baseline.
+4. Hybrid search (BM25 + vectors, Reciprocal Rank Fusion).
+5. LLM generation with an "I don't know" instruction, then question translation/rewriting for French queries.
+6. Grow the evaluation set to 40-50 questions; PDF page numbers (`feature/pdf-pages`).
