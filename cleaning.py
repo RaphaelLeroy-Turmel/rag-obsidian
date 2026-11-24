@@ -12,6 +12,8 @@ import re
 import pymupdf 
 import unicodedata
 
+NOTE_SUFFIXES = {".md", ".pdf"}  # the file types the pipeline can read (case-insensitive)
+
 @dataclass
 class cleanFile:
     # delete tags, YAML porpreties, keep only title and link to other notes
@@ -140,6 +142,19 @@ def clean_files():
     return cleaned_file_dic
         
 
+
+
+def clean_file(path):
+    """Clean one file (.md or .pdf) and return a cleanFile, or None for any other file."""
+    file = Path(path)
+    if not file.is_file():
+        return None  # sub-folders are not notes
+    suffix = file.suffix.lower()
+    if suffix == ".md":
+        return clean_markdown(file)
+    if suffix == ".pdf":
+        return clean_pdf(file)
+    return None
 
 
 def main():
